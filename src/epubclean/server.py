@@ -271,7 +271,10 @@ def _request_book(data: dict) -> tuple[str, str, dict[str, bool]]:
 
 
 def _safe_stem(filename: str) -> str:
-    stem = Path(filename).stem
+    # Not Path.stem: how it treats names like "...epub" changed in Python 3.15.
+    stem = Path(filename).name
+    if stem.lower().endswith(".epub"):
+        stem = stem[: -len(".epub")]
     stem = re.sub(r"[^\w.\- ]+", "", stem, flags=re.UNICODE).strip(" .")
     return stem[:120] or "book"
 
