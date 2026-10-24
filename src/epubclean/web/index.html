@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="epub-2-eleven-token" content="__TOKEN__">
+  <title>epub-2-eleven</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <p class="mark">epub-2-eleven</p>
+      <div class="titles">
+        <h1 id="book-title">Prepare an EPUB for ElevenLabs</h1>
+        <p id="book-meta" class="meta">Page numbers, running heads, and citation marks come out. The cover and title stay.</p>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="presets" role="radiogroup" aria-label="Preset">
+        <button type="button" class="preset" data-preset="narration" aria-pressed="true">Narration</button>
+        <button type="button" class="preset" data-preset="conservative" aria-pressed="false">Conservative</button>
+      </div>
+      <label class="browse">
+        Browse
+        <input id="file" type="file" accept=".epub,application/epub+zip">
+      </label>
+      <button type="button" id="open" class="primary">Open</button>
+    </div>
+  </header>
+  <p id="error" class="error" hidden></p>
+  <main class="workspace">
+    <section id="empty" class="empty">
+      <div class="empty-card">
+        <p class="empty-kicker">Drop an EPUB</p>
+        <p class="empty-title">A clean book, ready to be read aloud.</p>
+        <p>Unlocked files only. The voice keeps the prose. ElevenLabs still gets the cover and the title.</p>
+      </div>
+    </section>
+    <aside id="chapters" class="chapters" hidden></aside>
+    <section id="stage" class="stage" hidden>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" data-tab="chapter" aria-selected="true">Chapter</button>
+        <button type="button" class="tab" data-tab="voice" aria-selected="false">What the voice reads</button>
+      </div>
+      <div id="chapter-pane" class="pane">
+        <p class="banner">Struck lines are left out. Click one to keep it.</p>
+        <p id="chapter-banner" class="banner warn" hidden></p>
+        <article id="preview" class="paper"></article>
+      </div>
+      <div id="voice-pane" class="pane" hidden>
+        <pre id="voice" class="paper voice"></pre>
+      </div>
+    </section>
+  </main>
+  <footer class="bottom">
+    <p id="counts">No book open.</p>
+    <div class="export-row">
+      <p id="export-path"></p>
+      <button type="button" id="export" class="primary" disabled>Export EPUB</button>
+    </div>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>

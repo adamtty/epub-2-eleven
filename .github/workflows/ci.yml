@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "29 4 * * 1" # weekly: everything, fuzzing included
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # newest CPython that Atheris publishes wheels for (see the fuzzing job)
+  ATHERIS_PYTHON: "3.14"
+  # renovate: datasource=pypi depName=uv
+  UV_VERSION: 0.13.4
+  # renovate: datasource=pypi depName=zizmor
+  ZIZMOR_VERSION: 1.31.1
+  # renovate: datasource=pypi depName=pip-audit
+  PIP_AUDIT_VERSION: 2.10.1
+  # use the Python that setup-python installed; never download one
+  UV_PYTHON_DOWNLOADS: never
+
+jobs:
+  # Which expensive jobs a pull request needs. Fuzzing runs when the code it fuzzes or the fuzz harnesses change,
+  # not for dependency or CI version bumps (those are fuzzed on main after merge, and weekly). Pushes, the weekly
+  # run and manual runs do everything. If the file list can't be read, everything runs.
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read # list the pull request's changed files
+    outputs:
+      fuzz: ${{ steps.files.outputs.fuzz }}
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: What changed
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          FUZZ_PATHS: '^(src/epubclean/.*\.py$|tests/fuzz_|tests/fuzz-corpus/)'
+          DOCS_PATHS: '^(.*\.md|docs/|LICENSE$|\.github/ISSUE_TEMPLATE/)'
+        run: |
+          everything() {
+            echo "fuzz=true" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          [ -n "$PR" ] || everything
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)') ||
+            { echo "::warning::couldn't list the changed files; running everything"; everything; }
+          printf '%s\n' "$files"
+          if printf '%s\n' "$files" | grep -Eq "$FUZZ_PATHS"; then fuzz=true; else fuzz=false; fi
+          echo "fuzz=$fuzz" >> "$GITHUB_OUTPUT"
+          if printf '%s\n' "$files" | grep -Evq "$DOCS_PATHS"; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            release-assets.githubusercontent.com:443
+            objects.githubusercontent.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        run: pipx install "uv==${UV_VERSION}"
+
+      - run: uv sync --locked --group dev --python "$(command -v python)"
+
+      - name: ruff (lint, incl. bandit security rules)
+        run: uv run ruff check src tests scripts
+
+      - name: ruff (formatting)
+        run: uv run ruff format --check src tests scripts
+
+      - name: zizmor (workflow security)
+        run: pipx run "zizmor==${ZIZMOR_VERSION}" --offline --min-severity low .github/workflows
+
+      - name: JavaScript parses
+        run: node --check src/epubclean/web/app.js
+
+      # every locked dependency (runtime and dev) against the PyPI advisory database
+      - name: pip-audit (known vulnerabilities in uv.lock)
+        run: |
+          uv export --locked --all-groups --no-emit-project --format requirements-txt > "$RUNNER_TEMP/locked.txt"
+          pipx run "pip-audit==${PIP_AUDIT_VERSION}" --disable-pip --require-hashes -r "$RUNNER_TEMP/locked.txt"
+
+  test:
+    name: Tests (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14", "3.15"]
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            release-assets.githubusercontent.com:443
+            objects.githubusercontent.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        run: pipx install "uv==${UV_VERSION}"
+
+      - run: uv sync --locked --group dev --python "$(command -v python)"
+
+      - name: Tests
+        run: uv run pytest
+
+      - name: Package builds and ships the page
+        run: |
+          uv build --out-dir "$RUNNER_TEMP/dist"
+          python -m zipfile -l "$RUNNER_TEMP"/dist/*.whl | grep -q 'epubclean/web/index.html'
+
+  fuzz:
+    name: Fuzz
+    needs: changes
+    # skipped only on an explicit "false" (a failed Changes job means run it)
+    if: ${{ !cancelled() && needs.changes.outputs.fuzz != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            release-assets.githubusercontent.com:443
+            objects.githubusercontent.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Atheris only ships Linux x86-64 wheels, for CPython 3.12-3.14 (3.1.0 has none for 3.15). The
+      # version is an expression so Renovate leaves it alone: raise it when an Atheris release adds wheels.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.ATHERIS_PYTHON }}
+
+      - name: Install uv
+        run: pipx install "uv==${UV_VERSION}"
+
+      - name: Install the project and Atheris (hash-checked)
+        run: |
+          uv sync --locked --no-dev --python "$(command -v python)"
+          uv pip install --require-hashes --only-binary :all: -r tests/requirements-fuzz.txt
+
+      # coverage-guided; -timeout makes any input slower than 10 s (a regex blow-up) a failure
+      - name: Fuzz chapter markup
+        run: |
+          mkdir -p "$RUNNER_TEMP/chapter" crashes
+          cp tests/fuzz-corpus/chapter/* "$RUNNER_TEMP/chapter/"
+          .venv/bin/python tests/fuzz_chapter.py "$RUNNER_TEMP/chapter" -max_total_time=150 -timeout=10 -rss_limit_mb=2048 -artifact_prefix=crashes/
+
+      - name: Fuzz the package document and navigation
+        run: |
+          mkdir -p "$RUNNER_TEMP/package" crashes
+          cp tests/fuzz-corpus/package/* "$RUNNER_TEMP/package/"
+          .venv/bin/python tests/fuzz_package.py "$RUNNER_TEMP/package" -max_total_time=120 -timeout=10 -rss_limit_mb=2048 -artifact_prefix=crashes/
+
+      - name: Keep crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashes
+          path: crashes/
+          retention-days: 14

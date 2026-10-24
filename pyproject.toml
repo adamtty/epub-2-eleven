@@ -1,0 +1,54 @@
+[project]
+name = "epub-2-eleven"
+version = "0.1.0"
+description = "Strip furniture from an EPUB so ElevenLabs reads the book and nothing else."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "adamtty" }]
+requires-python = ">=3.12"
+dependencies = ["lxml>=5"]
+classifiers = [
+    "Environment :: Web Environment",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Text Processing :: Markup :: XML",
+]
+
+[project.urls]
+Homepage = "https://github.com/adamtty/epub-2-eleven"
+Issues = "https://github.com/adamtty/epub-2-eleven/issues"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.17"]
+
+[project.scripts]
+epub-2-eleven = "epubclean.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/epubclean"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["tests/fuzz-corpus"]
+
+[tool.ruff.lint]
+# bug- and security-catching rules (S is bandit)
+select = ["E", "F", "W", "B", "PLE", "S"]
+ignore = [
+    "S603", # flags every subprocess call; the one here is a fixed argument list, never a shell
+]
+
+[tool.ruff.lint.per-file-ignores]
+# asserts are how tests and fuzz harnesses check results; tests only talk to 127.0.0.1
+"tests/*" = ["S101", "S108", "S310"]
