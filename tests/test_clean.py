@@ -131,6 +131,15 @@ def test_superscript_references_are_removed(tmp_path):
         assert "2013" in text
 
 
+def test_multiple_glued_references_in_one_tail_are_removed(tmp_path):
+    body = "<h1>References</h1><p><em>He said</em> beliefs.”13 More.”14</p>"
+    book = load(make_epub(tmp_path / "refs.epub", [("text/c.xhtml", xhtml(body))]))
+
+    assert spoken_text(book, "narration") == "References\n\nHe said beliefs.” More.”"
+    references = [mark for mark in book.chapters[0].marks if mark.kind == "reference"]
+    assert [mark.text for mark in references] == ["13", "14"]
+
+
 def test_preview_marks_the_page_number(tmp_path):
     book = load(semantic_book(tmp_path / "Sample.epub"))
     html = chapter_preview_html(chapter(book, "body"))

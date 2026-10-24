@@ -154,6 +154,21 @@ def test_total_unpacked_size_is_capped(tmp_path, monkeypatch):
         parse_epub(make_epub(tmp_path / "x.epub", docs))
 
 
+def test_document_node_count_is_capped(monkeypatch):
+    monkeypatch.setattr(parse, "MAX_DOCUMENT_NODES", 10)
+    doc = xhtml("<h1>Many</h1>" + "<p>x</p>" * 20).encode()
+    with pytest.raises(EpubError, match="too much markup"):
+        parse.parse_markup(doc)
+
+
+def test_total_retained_node_count_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(parse, "MAX_DOCUMENT_NODES", 100)
+    monkeypatch.setattr(parse, "MAX_BOOK_NODES", 20)
+    docs = [(f"text/c{i}.xhtml", xhtml(f"<h1>C{i}</h1>" + "<p>x</p>" * 8)) for i in range(3)]
+    with pytest.raises(EpubError, match="too much markup"):
+        parse_epub(make_epub(tmp_path / "x.epub", docs))
+
+
 def test_deep_nesting_is_a_clean_error_or_reads(tmp_path):
     deep = "<div>" * 5000 + "<p>Deep.</p>" + "</div>" * 5000
     path = make_epub(tmp_path / "x.epub", [("text/c.xhtml", xhtml(f"<h1>Deep</h1>{deep}"))])

@@ -24,6 +24,11 @@ _DOC_TYPES = frozenset({"application/xhtml+xml", "text/html", "application/xml",
 # A small EPUB can claim to unpack into gigabytes. These caps stop a zip bomb.
 MAX_MEMBER = 64 * 1024 * 1024
 MAX_TOTAL = 512 * 1024 * 1024
+# Byte limits alone do not bound the size of an lxml tree: a small document can
+# contain hundreds of thousands of tiny elements.  Keep both individual trees
+# and the retained chapter trees for a book within predictable bounds.
+MAX_DOCUMENT_NODES = 50_000
+MAX_BOOK_NODES = 200_000
 _ZIP_ERRORS = (zipfile.BadZipFile, zlib.error, RuntimeError, NotImplementedError, EOFError, OSError)
 
 
@@ -57,7 +62,9 @@ def _xml_parser(*, recover: bool = False) -> etree.XMLParser:
 
 
 def parse_xml(data: bytes):
-    return etree.fromstring(data, _xml_parser())
+    root = etree.fromstring(data, _xml_parser())
+    _check_tree_size(root)
+    return root
 
 
 def parse_epub(path: Path) -> Book:
@@ -97,12 +104,16 @@ def parse_epub(path: Path) -> Book:
         cover_media, cover_bytes = _cover_image(archive, opf, manifest, guide, spine)
         nav_labels, landmarks = _navigation(archive, manifest, opf_dir)
         chapters: list[Chapter] = []
+        book_nodes = 0
         for index, idref in enumerate(spine):
             item = manifest.get(idref)
             if item is None:
                 raise EpubError(f"Spine item {idref} is missing from the manifest.")
             chapter = _load_chapter(archive, index, item, nav_labels)
             if chapter is not None:
+                book_nodes += _tree_size(chapter.tree)
+                if book_nodes > MAX_BOOK_NODES:
+                    raise EpubError("This EPUB contains too much markup to process safely.")
                 chapters.append(chapter)
     if not chapters:
         raise EpubError("This EPUB has no chapter documents to read.")
@@ -138,8 +149,19 @@ def parse_markup(data: bytes):
             root = lxml_html.fromstring(data)
         except (etree.ParserError, ValueError) as exc:
             raise EpubError("A document in this EPUB could not be read.") from exc
+    _check_tree_size(root)
     _drop_control_chars(root)
     return root
+
+
+def _tree_size(root) -> int:
+    return sum(1 for _node in root.iter())
+
+
+def _check_tree_size(root) -> None:
+    for count, _node in enumerate(root.iter(), start=1):
+        if count > MAX_DOCUMENT_NODES:
+            raise EpubError("A document in this EPUB contains too much markup to process safely.")
 
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")

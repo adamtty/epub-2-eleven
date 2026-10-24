@@ -383,12 +383,15 @@ def _lift_glued_citations(body, mark) -> None:
             continue
         if el.text:
             el.text = _consume_citations(el, el.text, 0, remember)
-        index = 0
-        while index < len(el):
-            child = el[index]
+        # lxml's len(element) and indexed child access walk the sibling list.
+        # Repeating them for a wide element makes this loop quadratic.  Follow
+        # sibling links instead; this also visits reference spans inserted by
+        # _consume_tail, so multiple citations in one tail still work.
+        child = next(iter(el), None)
+        while child is not None:
             if child.tail:
-                child.tail = _consume_tail(el, child, remember)
-            index += 1
+                child.tail = _consume_tail(child, remember)
+            child = child.getnext()
 
 
 def _consume_citations(parent, text: str, index: int, remember) -> str:
@@ -404,17 +407,17 @@ def _consume_citations(parent, text: str, index: int, remember) -> str:
     return text[:start]
 
 
-def _consume_tail(parent, child, remember) -> str:
+def _consume_tail(child, remember) -> str:
     text = child.tail or ""
     bounds = _citation_bounds(text)
     if bounds is None:
         return text
     start, end = bounds
-    span = parent.makeelement("span")
+    span = child.makeelement("span")
     span.text = text[start:end]
     span.tail = text[end:]
     remember(span)
-    parent.insert(parent.index(child) + 1, span)
+    child.addnext(span)
     return text[:start]
 
 
